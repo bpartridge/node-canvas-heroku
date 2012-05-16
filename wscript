@@ -33,8 +33,9 @@ def configure(conf):
 
   try:
     conf.check_cfg(package='cairo', args='--cflags --libs', mandatory=True)
+    conf.env['CUSTOM_CAIRO'] = False
   except:
-    use_custom_cairo = True
+    conf.env['CUSTOM_CAIRO'] = True
     conf.env.append_value('LINKFLAGS', ['-L../cairo','-lcairo'])
 
   flags = ['-O3', '-Wall', '-D_FILE_OFFSET_BITS=64', '-D_LARGEFILE_SOURCE', '-fPIC']
@@ -45,7 +46,7 @@ def build(bld):
   obj = bld.new_task_gen('cxx', 'shlib', 'node_addon')
   obj.target = 'canvas'
   obj.source = bld.glob('src/*.cc')
-  if use_custom_cairo:
+  if bld.env['CUSTOM_CAIRO']:
     print "Using custom cairo"
     obj.includes = 'cairo'
     obj.uselib = ['GIF']
