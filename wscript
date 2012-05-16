@@ -35,18 +35,11 @@ def configure(conf):
     conf.check_cfg(package='cairo', args='--cflags --libs', mandatory=True)
   except:
     use_custom_cairo = True
+    conf.env.append_value('LINKFLAGS', ['-L../cairo','-lcairo'])
 
   flags = ['-O3', '-Wall', '-D_FILE_OFFSET_BITS=64', '-D_LARGEFILE_SOURCE', '-fPIC']
   conf.env.append_value('CCFLAGS', flags)
   conf.env.append_value('CXXFLAGS', flags)
-
-@feature('cxx')
-@after('apply_link')
-def apply_add_precompiled(tgen):
-  if hasattr(tgen, 'add_precompiled'):
-    for i in Utils.to_list(tgen.add_precompiled):
-      input_node = tgen.bld.srcnode.find_resource(i)
-      tgen.link_task.inputs.append(input_node)
 
 def build(bld):
   obj = bld.new_task_gen('cxx', 'shlib', 'node_addon')
@@ -56,7 +49,6 @@ def build(bld):
     print "Using custom cairo"
     obj.includes = 'cairo'
     obj.uselib = ['GIF']
-    obj.add_precompiled = ['cairo/libcairo.so']
   else:
     print "Using builtin cairo"
     obj.uselib = ['CAIRO','GIF']
