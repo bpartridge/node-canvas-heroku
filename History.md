@@ -1,4 +1,75 @@
 
+0.12.0 / 2012-05-02 
+==================
+
+  * Added `textDrawingMode` context property [c-spencer]
+  * Added additional TextMetrics properties [c-spencer]
+
+0.11.3 / 2012-04-25 
+==================
+
+  * Fixed `Image` memory leak. Closes #150
+  * Fixed Context2d::hasShadow()
+
+0.11.2 / 2012-04-12 
+==================
+
+  * Fixed: pdf memory leak, free closure and surface in ~Canvas
+
+0.11.1 / 2012-04-10 
+==================
+
+  * Changed: renamed .nextPage() to .addPage()
+
+0.11.0 / 2012-04-10 
+==================
+
+  * Added quick PDF support
+  * Added `Canvas#type` getter
+  * Added ./examples/pdf-images.js
+  * Added ./examples/multiple-page-pdf.js
+  * Added ./examples/small-pdf.js
+
+0.10.3 / 2012-02-27 
+==================
+
+  * Fixed quadratic curve starting point for undefined path. Closes #155
+
+0.10.2 / 2012-02-06 
+==================
+
+  * Fixed: Context2d setters with invalid values ignored
+  * Changed: replaced seek with `fstat()`
+
+0.10.1 / 2012-01-31 
+==================
+
+  * Added _/opt/local/lib_ to wscript [obarthel]
+  * Added bounds checking to `rgba_to_string()` [obarthel]
+  * Fixed cleanup in JPEG Image loading [obarthel]
+  * Fixed missing CSS color table values [obarthel]
+
+0.10.0 / 2012-01-18 
+==================
+
+  * Added `ctx.createPattern()` [slaskis]
+
+0.9.0 / 2012-01-13 
+==================
+
+  * Added `createJPEGStream()` [Elijah Hamovitz]
+
+0.8.3 / 2012-01-04 
+==================
+
+  * Added support for libjpeg62-dev or libjpeg8-dev [wwlinx]
+
+0.8.2 / 2011-12-14 
+==================
+
+  * Fixed two memory leaks in context2d [Tharit]
+  * Fixed `make test-server`
+
 0.8.1 / 2011-10-31 
 ==================
 

@@ -12,6 +12,11 @@
 #include "Canvas.h"
 #include "CanvasGradient.h"
 
+typedef enum {
+  TEXT_DRAW_PATHS,
+  TEXT_DRAW_GLYPHS
+} canvas_draw_mode_t;
+
 /*
  * State struct.
  *
@@ -25,6 +30,8 @@ typedef struct {
   cairo_filter_t patternQuality;
   cairo_pattern_t *fillPattern;
   cairo_pattern_t *strokePattern;
+  cairo_pattern_t *fillGradient;
+  cairo_pattern_t *strokeGradient;
   float globalAlpha;
   short textAlignment;
   short textBaseline;
@@ -32,6 +39,7 @@ typedef struct {
   int shadowBlur;
   double shadowOffsetX;
   double shadowOffsetY;
+  canvas_draw_mode_t textDrawingMode;
 } canvas_state_t;
 
 class Context2d: public node::ObjectWrap {
@@ -55,6 +63,7 @@ class Context2d: public node::ObjectWrap {
     static Handle<Value> IsPointInPath(const Arguments &args);
     static Handle<Value> BeginPath(const Arguments &args);
     static Handle<Value> ClosePath(const Arguments &args);
+    static Handle<Value> AddPage(const Arguments &args);
     static Handle<Value> Clip(const Arguments &args);
     static Handle<Value> Fill(const Arguments &args);
     static Handle<Value> Stroke(const Arguments &args);
@@ -92,6 +101,7 @@ class Context2d: public node::ObjectWrap {
     static Handle<Value> GetShadowOffsetY(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetShadowBlur(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetAntiAlias(Local<String> prop, const AccessorInfo &info);
+    static Handle<Value> GetTextDrawingMode(Local<String> prop, const AccessorInfo &info);
     static void SetPatternQuality(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     static void SetGlobalCompositeOperation(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     static void SetGlobalAlpha(Local<String> prop, Local<Value> val, const AccessorInfo &info);
@@ -104,6 +114,7 @@ class Context2d: public node::ObjectWrap {
     static void SetShadowOffsetY(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     static void SetShadowBlur(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     static void SetAntiAlias(Local<String> prop, Local<Value> val, const AccessorInfo &info);
+    static void SetTextDrawingMode(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     inline void setContext(cairo_t *ctx) { _context = ctx; }
     inline cairo_t *context(){ return _context; }
     inline Canvas *canvas(){ return _canvas; }

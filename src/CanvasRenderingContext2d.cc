@@ -14,6 +14,7 @@
 #include "ImageData.h"
 #include "CanvasRenderingContext2d.h"
 #include "CanvasGradient.h"
+#include "CanvasPattern.h"
 
 Persistent<FunctionTemplate> Context2d::constructor;
 
@@ -61,6 +62,7 @@ Context2d::Initialize(Handle<Object> target) {
   Local<ObjectTemplate> proto = constructor->PrototypeTemplate();
   NODE_SET_PROTOTYPE_METHOD(constructor, "drawImage", DrawImage);
   NODE_SET_PROTOTYPE_METHOD(constructor, "putImageData", PutImageData);
+  NODE_SET_PROTOTYPE_METHOD(constructor, "addPage", AddPage);
   NODE_SET_PROTOTYPE_METHOD(constructor, "save", Save);
   NODE_SET_PROTOTYPE_METHOD(constructor, "restore", Restore);
   NODE_SET_PROTOTYPE_METHOD(constructor, "rotate", Rotate);
@@ -108,6 +110,7 @@ Context2d::Initialize(Handle<Object> target) {
   proto->SetAccessor(String::NewSymbol("shadowOffsetY"), GetShadowOffsetY, SetShadowOffsetY);
   proto->SetAccessor(String::NewSymbol("shadowBlur"), GetShadowBlur, SetShadowBlur);
   proto->SetAccessor(String::NewSymbol("antialias"), GetAntiAlias, SetAntiAlias);
+  proto->SetAccessor(String::NewSymbol("textDrawingMode"), GetTextDrawingMode, SetTextDrawingMode);
   target->Set(String::NewSymbol("CanvasRenderingContext2d"), constructor->GetFunction());
 }
 
@@ -125,6 +128,7 @@ Context2d::Context2d(Canvas *canvas) {
   state->globalAlpha = 1;
   state->textAlignment = -1;
   state->fillPattern = state->strokePattern = NULL;
+  state->fillGradient = state->strokeGradient = NULL;
   state->textBaseline = NULL;
   rgba_t transparent = { 0,0,0,1 };
   rgba_t transparent_black = { 0,0,0,0 };
@@ -132,6 +136,7 @@ Context2d::Context2d(Canvas *canvas) {
   state->stroke = transparent;
   state->shadow = transparent_black;
   state->patternQuality = CAIRO_FILTER_GOOD;
+  state->textDrawingMode = TEXT_DRAW_PATHS;
 }
 
 /*
@@ -139,6 +144,7 @@ Context2d::Context2d(Canvas *canvas) {
  */
 
 Context2d::~Context2d() {
+  while(stateno >= 0) free(states[stateno--]);
   cairo_destroy(_context);
 }
 
@@ -205,6 +211,7 @@ void
 Context2d::restorePath() {
   cairo_new_path(_context);
   cairo_append_path(_context, _path);
+  cairo_path_destroy(_path);
 }
 
 /*
@@ -214,8 +221,12 @@ Context2d::restorePath() {
 void
 Context2d::fill(bool preserve) {
   if (state->fillPattern) {
-    cairo_pattern_set_filter(state->fillPattern, state->patternQuality);
-    cairo_set_source(_context, state->fillPattern);
+    cairo_set_source(_context, state->fillPattern); 
+    cairo_pattern_set_extend(cairo_get_source(_context), CAIRO_EXTEND_REPEAT); 
+    // TODO repeat/repeat-x/repeat-y
+  } else if (state->fillGradient) {
+    cairo_pattern_set_filter(state->fillGradient, state->patternQuality);
+    cairo_set_source(_context, state->fillGradient);
   } else {
     setSourceRGBA(state->fill);
   }
@@ -238,8 +249,11 @@ Context2d::fill(bool preserve) {
 void
 Context2d::stroke(bool preserve) {
   if (state->strokePattern) {
-    cairo_pattern_set_filter(state->strokePattern, state->patternQuality);
-    cairo_set_source(_context, state->fillPattern);
+    cairo_set_source(_context, state->strokePattern); 
+    cairo_pattern_set_extend(cairo_get_source(_context), CAIRO_EXTEND_REPEAT); 
+  } else if (state->strokeGradient) {
+    cairo_pattern_set_filter(state->strokeGradient, state->patternQuality);
+    cairo_set_source(_context, state->strokeGradient);
   } else {
     setSourceRGBA(state->stroke);
   }
@@ -316,7 +330,7 @@ Context2d::setSourceRGBA(rgba_t color) {
 bool
 Context2d::hasShadow() {
   return state->shadow.a
-    && (state->shadowBlur || state->shadowOffsetX || state->shadowOffsetX);
+    && (state->shadowBlur || state->shadowOffsetX || state->shadowOffsetY);
 }
 
 /*
@@ -379,7 +393,8 @@ Context2d::blur(cairo_surface_t *surface, int radius) {
           }
       }
   }
-  free( precalc );
+
+  free(precalc);
 }
 
 /*
@@ -396,6 +411,21 @@ Context2d::New(const Arguments &args) {
   Context2d *context = new Context2d(canvas);
   context->Wrap(args.This());
   return args.This();
+}
+
+/*
+ * Create a new page.
+ */
+
+Handle<Value>
+Context2d::AddPage(const Arguments &args) {
+  HandleScope scope;
+  Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
+  if (!context->canvas()->isPDF()) {
+    return ThrowException(Exception::Error(String::New("only PDF canvases support .nextPage()")));
+  }
+  cairo_show_page(context->context());
+  return Undefined();
 }
 
 /*
@@ -508,10 +538,6 @@ Context2d::DrawImage(const Arguments &args) {
   if (args.Length() < 3)
     return ThrowException(Exception::TypeError(String::New("invalid arguments")));
 
-#if CAIRO_VERSION_MINOR < 10
-  return ThrowException(Exception::Error(String::New("drawImage() needs cairo >= 1.10.0")));
-#else
-
   int sx = 0
     , sy = 0
     , sw = 0
@@ -581,14 +607,10 @@ Context2d::DrawImage(const Arguments &args) {
   // Start draw
   cairo_save(ctx);
 
-  // Source surface
-  // TODO: only works with cairo >= 1.10.0
-  cairo_surface_t *src = cairo_surface_create_for_rectangle(
-      surface
-    , sx
-    , sy
-    , sw
-    , sh);
+  context->savePath();
+  cairo_rectangle(ctx, dx, dy, dw, dh);
+  cairo_clip(ctx);
+  context->restorePath();
 
   // Scale src
   if (dw != sw || dh != sh) {
@@ -600,14 +622,11 @@ Context2d::DrawImage(const Arguments &args) {
   }
 
   // Paint
-  cairo_set_source_surface(ctx, src, dx, dy);
+  cairo_set_source_surface(ctx, surface, dx - sx, dy - sy);
   cairo_pattern_set_filter(cairo_get_source(ctx), context->state->patternQuality);
   cairo_paint_with_alpha(ctx, context->state->globalAlpha);
 
   cairo_restore(ctx);
-  cairo_surface_destroy(src);
-
-#endif
 
   return Undefined();
 }
@@ -905,6 +924,38 @@ Context2d::SetAntiAlias(Local<String> prop, Local<Value> val, const AccessorInfo
 }
 
 /*
+ * Get text drawing mode.
+ */
+
+Handle<Value>
+Context2d::GetTextDrawingMode(Local<String> prop, const AccessorInfo &info) {
+  HandleScope scope;
+  Context2d *context = ObjectWrap::Unwrap<Context2d>(info.This());
+  const char *mode;
+  if (context->state->textDrawingMode == TEXT_DRAW_PATHS) {
+    mode = "path";
+  } else if (context->state->textDrawingMode == TEXT_DRAW_GLYPHS) {
+    mode = "glyph";
+  }
+  return scope.Close(String::NewSymbol(mode));
+}
+
+/*
+ * Set text drawing mode.
+ */
+
+void
+Context2d::SetTextDrawingMode(Local<String> prop, Local<Value> val, const AccessorInfo &info) {
+  String::AsciiValue str(val->ToString());
+  Context2d *context = ObjectWrap::Unwrap<Context2d>(info.This());
+  if (0 == strcmp("path", *str)) {
+    context->state->textDrawingMode = TEXT_DRAW_PATHS;
+  } else if (0 == strcmp("glyph", *str)) {
+    context->state->textDrawingMode = TEXT_DRAW_GLYPHS;
+  }
+}
+
+/*
  * Get miter limit.
  */
 
@@ -1048,12 +1099,17 @@ Context2d::SetFillPattern(const Arguments &args) {
   HandleScope scope;
 
   Local<Object> obj = args[0]->ToObject();
-  if (!Gradient::constructor->HasInstance(obj))
-    return ThrowException(Exception::TypeError(String::New("Gradient expected")));
-
-  Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
-  Gradient *grad = ObjectWrap::Unwrap<Gradient>(obj);
-  context->state->fillPattern = grad->pattern();
+  if (Gradient::constructor->HasInstance(obj)){
+    Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
+    Gradient *grad = ObjectWrap::Unwrap<Gradient>(obj);
+    context->state->fillGradient = grad->pattern();
+  } else if(Pattern::constructor->HasInstance(obj)){
+    Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
+    Pattern *pattern = ObjectWrap::Unwrap<Pattern>(obj);
+    context->state->fillPattern = pattern->pattern();
+  } else {
+    return ThrowException(Exception::TypeError(String::New("Gradient or Pattern expected")));
+  }
   return Undefined();
 }
 
@@ -1066,12 +1122,18 @@ Context2d::SetStrokePattern(const Arguments &args) {
   HandleScope scope;
 
   Local<Object> obj = args[0]->ToObject();
-  if (!Gradient::constructor->HasInstance(obj))
-    return ThrowException(Exception::TypeError(String::New("Gradient expected")));
+  if (Gradient::constructor->HasInstance(obj)){
+    Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
+    Gradient *grad = ObjectWrap::Unwrap<Gradient>(obj);
+    context->state->strokeGradient = grad->pattern();
+  } else if(Pattern::constructor->HasInstance(obj)){
+    Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
+    Pattern *pattern = ObjectWrap::Unwrap<Pattern>(obj);
+    context->state->strokePattern = pattern->pattern();
+  } else {
+    return ThrowException(Exception::TypeError(String::New("Gradient or Pattern expected")));
+  }
 
-  Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
-  Gradient *grad = ObjectWrap::Unwrap<Gradient>(obj);
-  context->state->strokePattern = grad->pattern();
   return Undefined();
 }
 
@@ -1099,7 +1161,7 @@ Context2d::GetShadowColor(Local<String> prop, const AccessorInfo &info) {
   HandleScope scope;
   char buf[64];
   Context2d *context = ObjectWrap::Unwrap<Context2d>(info.This());
-  rgba_to_string(context->state->shadow, buf);
+  rgba_to_string(context->state->shadow, buf, sizeof(buf));
   return scope.Close(String::New(buf));
 }
 
@@ -1116,7 +1178,7 @@ Context2d::SetFillColor(const Arguments &args) {
   uint32_t rgba = rgba_from_string(*str, &ok);
   if (!ok) return Undefined();
   Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
-  context->state->fillPattern = NULL;
+  context->state->fillPattern = context->state->fillGradient = NULL;
   context->state->fill = rgba_create(rgba);
   return Undefined();
 }
@@ -1130,7 +1192,7 @@ Context2d::GetFillColor(Local<String> prop, const AccessorInfo &info) {
   HandleScope scope;
   char buf[64];
   Context2d *context = ObjectWrap::Unwrap<Context2d>(info.This());
-  rgba_to_string(context->state->fill, buf);
+  rgba_to_string(context->state->fill, buf, sizeof(buf));
   return scope.Close(String::New(buf));
 }
 
@@ -1147,7 +1209,7 @@ Context2d::SetStrokeColor(const Arguments &args) {
   uint32_t rgba = rgba_from_string(*str, &ok);
   if (!ok) return Undefined();
   Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
-  context->state->strokePattern = NULL;
+  context->state->strokePattern = context->state->strokeGradient = NULL;
   context->state->stroke = rgba_create(rgba);
   return Undefined();
 }
@@ -1161,7 +1223,7 @@ Context2d::GetStrokeColor(Local<String> prop, const AccessorInfo &info) {
   HandleScope scope;
   char buf[64];
   Context2d *context = ObjectWrap::Unwrap<Context2d>(info.This());
-  rgba_to_string(context->state->stroke, buf);
+  rgba_to_string(context->state->stroke, buf, sizeof(buf));
   return scope.Close(String::New(buf));
 }
 
@@ -1215,6 +1277,11 @@ Context2d::QuadraticCurveTo(const Arguments &args) {
     , y2 = args[3]->NumberValue();
 
   cairo_get_current_point(ctx, &x, &y);
+
+  if (0 == x && 0 == y) {
+    x = x1;
+    y = y1;
+  }
 
   cairo_curve_to(ctx
     , x  + 2.0 / 3.0 * (x1 - x),  y  + 2.0 / 3.0 * (y1 - y)
@@ -1404,8 +1471,13 @@ Context2d::FillText(const Arguments &args) {
   Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
 
   context->savePath();
-  context->setTextPath(*str, x, y);
-  context->fill();
+  if (context->state->textDrawingMode == TEXT_DRAW_GLYPHS) {
+    context->fill();
+    context->setTextPath(*str, x, y);
+  } else if (context->state->textDrawingMode == TEXT_DRAW_PATHS) {
+    context->setTextPath(*str, x, y);
+    context->fill();
+  }
   context->restorePath();
 
   return Undefined();
@@ -1429,8 +1501,13 @@ Context2d::StrokeText(const Arguments &args) {
   Context2d *context = ObjectWrap::Unwrap<Context2d>(args.This());
 
   context->savePath();
-  context->setTextPath(*str, x, y);
-  context->stroke();
+  if (context->state->textDrawingMode == TEXT_DRAW_GLYPHS) {
+    context->stroke();
+    context->setTextPath(*str, x, y);
+  } else if (context->state->textDrawingMode == TEXT_DRAW_PATHS) {
+    context->setTextPath(*str, x, y);
+    context->stroke();
+  }
   context->restorePath();
 
   return Undefined();
@@ -1474,18 +1551,22 @@ Context2d::setTextPath(const char *str, double x, double y) {
       // Olaf (2011-02-26): fe.ascent approximates the distance between
       // the top of the em square and the alphabetic baseline
       cairo_font_extents(_context, &fe);
-      y += fe.ascent / 2;
+      y += (fe.ascent - fe.descent)/2;
       break;
     case TEXT_BASELINE_BOTTOM:
       // Olaf (2011-02-26): we need to know the distance between the alphabetic
       // baseline and the bottom of the em square
       cairo_font_extents(_context, &fe);
-      y -= fe.height - fe.ascent;
+      y -= fe.descent;
       break;
   }
 
   cairo_move_to(_context, x, y);
-  cairo_text_path(_context, str);
+  if (state->textDrawingMode == TEXT_DRAW_PATHS) {
+    cairo_text_path(_context, str);
+  } else if (state->textDrawingMode == TEXT_DRAW_GLYPHS) {
+    cairo_show_text(_context, str);
+  }
 }
 
 /*
@@ -1583,6 +1664,9 @@ Context2d::SetFont(const Arguments &args) {
 
 /*
  * Return the given text extents.
+ * TODO: Support for:
+ * hangingBaseline, ideographicBaseline,
+ * fontBoundingBoxAscent, fontBoundingBoxDescent
  */
 
 Handle<Value>
@@ -1596,8 +1680,49 @@ Context2d::MeasureText(const Arguments &args) {
   Local<Object> obj = Object::New();
 
   cairo_text_extents_t te;
+  cairo_font_extents_t fe;
+
   cairo_text_extents(ctx, *str, &te);
+  cairo_font_extents(ctx, &fe);
+
   obj->Set(String::New("width"), Number::New(te.x_advance));
+
+  double x_offset;
+  switch (context->state->textAlignment) {
+    case 0: // center
+      x_offset = te.width / 2;
+      break;
+    case 1: // right
+      x_offset = te.width;
+      break;
+    default: // left
+      x_offset = 0.0;
+  }
+
+  obj->Set(String::New("actualBoundingBoxLeft"), Number::New(x_offset - te.x_bearing));
+  obj->Set(String::New("actualBoundingBoxRight"), Number::New((te.x_bearing + te.width) - x_offset));
+
+  double y_offset;
+  switch (context->state->textBaseline) {
+    case TEXT_BASELINE_TOP:
+    case TEXT_BASELINE_HANGING:
+      y_offset = fe.ascent;
+      break;
+    case TEXT_BASELINE_MIDDLE:
+      y_offset = (fe.ascent - fe.descent)/2;
+      break;
+    case TEXT_BASELINE_BOTTOM:
+      y_offset = -fe.descent;
+      break;
+    default:
+      y_offset = 0.0;
+  }
+  obj->Set(String::New("actualBoundingBoxAscent"), Number::New(-(te.y_bearing + y_offset)));
+  obj->Set(String::New("actualBoundingBoxDescent"), Number::New(te.height + te.y_bearing + y_offset));
+  
+  obj->Set(String::New("emHeightAscent"), Number::New(fe.ascent - y_offset));
+  obj->Set(String::New("emHeightDescent"), Number::New(fe.descent + y_offset));
+  obj->Set(String::New("alphabeticBaseline"), Number::New(-y_offset));
 
   return scope.Close(obj);
 }
