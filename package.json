@@ -1,9 +1,10 @@
-{  "name": "canvas"
- , "description":  "Canvas fork"
+{  "name": "canvas-heroku"
+ , "description": "Canvas fork including Cairo binaries for Heroku deployment"
  , "version":  "0.12.0"
- , "author": "Originally TJ"
+ , "author": "TJ Holowaychuk <tj@learnboost.com>"
+ , "maintainers": "Brenton Partridge <bapartridge@gmail.com>"
  , "keywords": ["canvas", "graphic", "graphics", "pixman", "cairo"]
- , "repository": "git://github.com/elspoono/node-canvas-heroku"
+ , "repository": "git://github.com/bpartridge/node-canvas-heroku"
  , "scripts": {
    "preinstall": "node-waf configure build"
  }
